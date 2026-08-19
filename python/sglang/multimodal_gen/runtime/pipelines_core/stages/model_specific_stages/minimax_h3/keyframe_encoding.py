@@ -37,16 +37,26 @@ def minimax_h3_scoped_encode_rng(seed: int, device: torch.device | None = None):
 
     The encode recipes seed the default torch generators right before a
     posterior-sampled VAE encode. Forking restores the process-global CPU and
-    CUDA generators after the encode while preserving the exact sampled result.
+    accelerator (CUDA/XPU) generators after the encode while preserving the
+    exact sampled result.
     """
     devices: list[torch.device] = []
+    device_type = "cuda"
     if device is not None and device.type == "cuda" and torch.cuda.is_available():
         devices = [device]
-    with torch.random.fork_rng(devices=devices):
+        device_type = "cuda"
+    elif device is not None and device.type == "xpu" and torch.xpu.is_available():
+        devices = [device]
+        device_type = "xpu"
+    with torch.random.fork_rng(devices=devices, device_type=device_type):
         torch.default_generator.manual_seed(int(seed))
         for forked_device in devices:
-            with torch.cuda.device(forked_device):
-                torch.cuda.manual_seed(int(seed))
+            if device_type == "xpu":
+                with torch.xpu.device(forked_device):
+                    torch.xpu.manual_seed(int(seed))
+            else:
+                with torch.cuda.device(forked_device):
+                    torch.cuda.manual_seed(int(seed))
         yield
 
 

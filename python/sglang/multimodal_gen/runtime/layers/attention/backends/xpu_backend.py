@@ -120,3 +120,32 @@ class XPUAttentionImpl(AttentionImpl):
 
         result = out.reshape(bsz, seqlen_q, nheads_q, d)
         return result
+
+    def forward_varlen(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        *,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+        cu_seqlens_host: tuple[int, ...] | None = None,
+    ) -> torch.Tensor:
+        # Packed varlen path: q/k/v are [total_tokens, nheads, head_dim] and the
+        # caller supplies the document boundaries, so feed them straight to the
+        # flash-attention varlen kernel instead of the per-segment SDPA fallback.
+        del cu_seqlens_host
+        out = flash_attn_func(
+            q=query.contiguous(),
+            k=key.contiguous(),
+            v=value.contiguous(),
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=max_seqlen,
+            softmax_scale=self.softmax_scale,
+            causal=self.causal,
+        )
+        # The varlen kernel returns just the packed [total_tokens, nheads,
+        # head_dim] output here (LSE not requested); tolerate a tuple too.
+        return out[0] if isinstance(out, tuple) else out

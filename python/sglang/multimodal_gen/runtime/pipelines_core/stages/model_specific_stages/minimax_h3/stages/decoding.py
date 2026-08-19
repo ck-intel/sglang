@@ -35,6 +35,11 @@ from sglang.multimodal_gen.runtime.utils.torch_compile import (
     ActiveTargetCompiledCallable,
 )
 
+# Device types that support torch.autocast for the VAE decode. Keyed off the
+# latent's actual device so cuda (device.type == "cuda") keep their prior
+# behavior and xpu is additionally enabled.
+_AUTOCAST_DECODE_DEVICES = ("cuda", "xpu")
+
 
 def _required_tensor(value, path: str) -> torch.Tensor:
     if not isinstance(value, torch.Tensor):
@@ -286,7 +291,7 @@ class MiniMaxH3DecodingStage(DecodingStage):
                 server_args, "audio_vae", precision_attr="audio_vae_precision"
             )
             audio_autocast_enabled = (
-                audio_latent.device.type == "cuda"
+                audio_latent.device.type in _AUTOCAST_DECODE_DEVICES
                 and autocast_enabled(audio_vae_dtype, server_args.disable_autocast)
             )
             with torch.autocast(
@@ -340,7 +345,7 @@ class MiniMaxH3DecodingStage(DecodingStage):
             )
             video_vae_dtype = resolve_decode_precision(server_args, "video_vae")
             visual_autocast_enabled = (
-                visual_latent.device.type == "cuda"
+                visual_latent.device.type in _AUTOCAST_DECODE_DEVICES
                 and autocast_enabled(video_vae_dtype, server_args.disable_autocast)
             )
             if visual_autocast_enabled:

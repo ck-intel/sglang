@@ -35,12 +35,15 @@ from sglang.multimodal_gen.runtime.pipelines_core.stages.validators import (
 from sglang.multimodal_gen.runtime.pipelines_core.stages.validators import (
     VerificationResult,
 )
+from sglang.multimodal_gen.runtime.platforms import current_platform
 from sglang.multimodal_gen.runtime.server_args import ServerArgs
 from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
 from sglang.multimodal_gen.runtime.utils.nvtx_pytorch_hooks import maybe_nvtx_range
 from sglang.multimodal_gen.runtime.utils.perf_logger import StageProfiler
 
 logger = init_logger(__name__)
+
+_is_xpu = current_platform.is_xpu()
 
 _REF2VA_VIDEO_CHAINS = {
     "video.reference_preserve",
@@ -515,9 +518,14 @@ class MiniMaxH3DenoisingStage(DenoisingStage):
 
         ctx = _resolve_full_loop_context(batch)
 
-        if not torch.cuda.is_available():
-            raise RuntimeError("MiniMax H3 full-loop denoise requires CUDA")
-        device = torch.device("cuda")
+        if _is_xpu:
+            device = torch.device("xpu")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            raise RuntimeError(
+                "MiniMax H3 full-loop denoise requires a CUDA or XPU device"
+            )
         sigmas_video = [float(v) for v in ctx.sigmas["video"]]
         self._maybe_enable_cache_dit_and_torch_compile(
             len(sigmas_video) - 1,
@@ -938,8 +946,8 @@ def _publish_full_loop_outputs(
     )
 
     target_rows = video_rows[positive.video_target_slice]
-    # Keep latents on CUDA so decode can reuse them without a device round-trip;
-    # decode autocast is enabled only for CUDA inputs.
+    # Keep latents on the device (CUDA/XPU) so decode can reuse them
+    # without a device round-trip; decode autocast follows the input device.
     batch.latents = minimax_h3_unpatchify_video_tokens(
         target_rows,
         latent_shape=[ctx.latent_t, ctx.latent_h // 2, ctx.latent_w // 2, 24],
